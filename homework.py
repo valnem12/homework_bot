@@ -2,6 +2,7 @@ import os
 import sys
 import requests
 import telegram
+from telegram.error import TelegramError
 import time
 from dotenv import load_dotenv
 import logging
@@ -24,8 +25,8 @@ logger.info('bot started')
 PRACTICUM_TOKEN = os.getenv('PRACTICUM_TOKEN')
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
+TELEGRAM_RETRY_TIME = 600
 
-RETRY_TIME = 600
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
@@ -35,8 +36,6 @@ HOMEWORK_STATUSES = {
     'rejected': 'Работа проверена: у ревьюера есть замечания.'
 }
 
-CURRENT_STATUS = None
-
 
 def send_message(bot, message): # noqa
     """.
@@ -45,13 +44,12 @@ def send_message(bot, message): # noqa
     Принимает на вход два параметра:
     экземпляр класса Bot и строку с текстом сообщения.
     """
-    logger = logging.getLogger('send_message')
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
-        logger.info('Message sent to the chat')
-    except Exception as e:
+    except TelegramError as e:
         logger.exception('Chat message has failed with the following error:'
                          f'\n {e}')
+    logger.info('Message sent to the chat')
 
 
 def get_api_answer(current_timestamp):
@@ -63,13 +61,19 @@ def get_api_answer(current_timestamp):
     преобразовав его из формата JSON к типам данных Python.
     """
     logger = logging.getLogger('get_api_answer')
+    logger.info('get_api_answer')
+    print('GET API')
     timestamp = current_timestamp or int(time.time())
     params = {'from_date': timestamp}
-    response = requests.get(ENDPOINT, headers=HEADERS, params=params)
-    if response.status_code != 200:
-        logger.error('No server response')
-        raise 'No server alive'
-    logger.info('Successfully connected to the server')
+    try:
+        response = requests.get(ENDPOINT, headers=HEADERS, params=params)
+        if response.status_code != 200:
+            logger.error('No server response')
+            raise 'No server alive'
+        logger.info('Successfully connected to the server')
+    except requests.exceptions.RequestException as e:
+        logger.exception(e)
+        raise
     return response.json()
 
 
@@ -82,18 +86,16 @@ def check_response(response):
     то функция должна вернуть список домашних работ (он может быть и пустым),
     доступный в ответе API по ключу 'homeworks'.
     """
-    logger = logging.getLogger('check_response')
-    if type(response) != dict:
-        raise TypeError('Warning is not a dictionary')
     try:
-        res = response.get('homeworks')[0]
-        logger.info('Homework was found')
-        return res
-    except IndexError as e:
-        logger.error('No homeworks were found so far')
-        logger.exception(f'Exception is {e}')
-        raise IndexError('Dictionary is empty')
-        return {}
+        assert issubclass(type(response), dict), 'Type is not a dictionary'
+        assert response.get('homeworks') != [], (
+            'No homeworks were found so far')
+        assert {'homework_name',
+                'status'}.issubset(response.get('homeworks')[0]), (
+            'Response yet to contain the required values')
+    except AssertionError as e:
+        raise Exception(e.args)
+    return response.get('homeworks')[0]
 
 
 def parse_status(homework):
@@ -104,30 +106,11 @@ def parse_status(homework):
     В случае успеха, функция возвращает подготовленную для отправки
     в Telegram строку, содержащую один из вердиктов словаря HOMEWORK_STATUSES
     """
-    global CURRENT_STATUS
-    logger = logging.getLogger('parse_status')
-    try:
-        homework_name = homework.get('homework_name')
-        logger.info(f'homework name is {homework_name}')
-
-        homework_status = homework.get('status')
-        logger.info(f'homework status is {homework_status}')
-
-        if CURRENT_STATUS != homework_status:
-            try:
-                verdict = HOMEWORK_STATUSES[homework_status]
-                CURRENT_STATUS = homework_status
-                logger.debug('No updates with homework status')
-                return (f'Изменился статус проверки работы "{homework_name}".'
-                        f'{verdict}')
-            except KeyError as k:
-                logger.error(f'No such key existing {k}')
-                return {}
-    except Exception as e:
-        logger.warning('No homework found')
-        logger.error('There is at least one Homework API key missing')
-        raise KeyError('HOMEWORK NAME ERROR', e)
-        return {}
+    homework_name = homework['homework_name']
+    status = homework['status']
+    verdict = HOMEWORK_STATUSES[status]
+    return (f'Изменился статус проверки работы {homework_name}.'
+            f'{verdict}')
 
 
 def check_tokens():
@@ -139,20 +122,19 @@ def check_tokens():
     """
     logger = logging.getLogger('check_tokens')
     try:
-        if (PRACTICUM_TOKEN and TELEGRAM_TOKEN and TELEGRAM_CHAT_ID):
-            logger.info('Tokens are all set')
-            return True
-        logger.critical('Token value isn\'t set')
-        return False
-    except NameError:
-        logger.critical('Token is missing')
+        {PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID}
+        return True
+    except NameError as name:
+        logger.critical(f'Token {name}')
         return False
 
 
 def main():
     """Основная логика работы бота."""
-    logger = logging.getLogger('main')
-    if check_tokens():
+    logger = logging.getLogger(__name__)
+    if not check_tokens():
+        raise ValueError('There is an issue with the tokens!')
+    else:
         bot = telegram.Bot(token=TELEGRAM_TOKEN)
         current_timestamp = int(time.time())
         previous_error = None
@@ -160,20 +142,22 @@ def main():
             try:
                 response = get_api_answer(current_timestamp)
                 logger.info('response was received')
-                parse_status(check_response(response))
+                message = parse_status(check_response(response))
                 logger.info('parsing was completed')
-                current_timestamp += RETRY_TIME
-                time.sleep(RETRY_TIME)
+                send_message(bot, message)
+                logger.info('message was sent to Telegram chat '
+                            f'{TELEGRAM_CHAT_ID}')
+                current_timestamp = response.get('current_date')
+                time.sleep(TELEGRAM_RETRY_TIME)
 
             except Exception as error:
                 message = f'Сбой в работе программы: {error}'
-                if error == previous_error:
+                if str(error) != str(previous_error):
                     send_message(bot, message)
-                time.sleep(RETRY_TIME)
+                    previous_error = error
+                time.sleep(TELEGRAM_RETRY_TIME)
             else:
                 logger.error('test')
-    else:
-        raise ValueError('There is an issue with the tokens!')
 
 
 if __name__ == '__main__':

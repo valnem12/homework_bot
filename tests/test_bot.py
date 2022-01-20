@@ -359,7 +359,7 @@ class TestHomework:
         func_name = 'parse_status'
         response = homework.get_api_answer(current_timestamp)
         homeworks = homework.check_response(response)
-        for hw in homeworks:
+        for hw in homeworks: 
             status_message = None
             try:
                 status_message = homework.parse_status(hw)
