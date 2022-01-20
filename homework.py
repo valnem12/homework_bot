@@ -69,7 +69,7 @@ def get_api_answer(current_timestamp):
         response = requests.get(ENDPOINT, headers=HEADERS, params=params)
         if response.status_code != 200:
             logger.error('No server response')
-            raise 'No server alive'
+            raise
         logger.info('Successfully connected to the server')
     except requests.exceptions.RequestException as e:
         logger.exception(e)
@@ -86,15 +86,12 @@ def check_response(response):
     то функция должна вернуть список домашних работ (он может быть и пустым),
     доступный в ответе API по ключу 'homeworks'.
     """
-    try:
-        assert issubclass(type(response), dict), 'Type is not a dictionary'
-        assert response.get('homeworks') != [], (
-            'No homeworks were found so far')
-        assert {'homework_name',
-                'status'}.issubset(response.get('homeworks')[0]), (
-            'Response yet to contain the required values')
-    except AssertionError as e:
-        raise Exception(e.args)
+    if not issubclass(type(response), dict):
+        raise TypeError('Type is not a dictionary')
+
+    if response.get('homeworks') == []:
+        raise ValueError('No homeworks were found so far')
+
     return response.get('homeworks')[0]
 
 
@@ -106,10 +103,14 @@ def parse_status(homework):
     В случае успеха, функция возвращает подготовленную для отправки
     в Telegram строку, содержащую один из вердиктов словаря HOMEWORK_STATUSES
     """
+    if not {'homework_name',
+            'status'}.issubset(homework):
+        raise KeyError('Response yet to contain the required values')
+
     homework_name = homework['homework_name']
     status = homework['status']
     verdict = HOMEWORK_STATUSES[status]
-    return (f'Изменился статус проверки работы {homework_name}.'
+    return (f'Изменился статус проверки работы "{homework_name}". '
             f'{verdict}')
 
 
@@ -122,7 +123,8 @@ def check_tokens():
     """
     logger = logging.getLogger('check_tokens')
     try:
-        {PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID}
+        if None in {PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID}:
+            return False
         return True
     except NameError as name:
         logger.critical(f'Token {name}')
