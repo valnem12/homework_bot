@@ -137,7 +137,7 @@ def check_tokens():
             if (eval(n) in (PRACTICUM_TOKEN,
                             TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
                and eval(n) is None and '__' not in n):
-                token_names.append(n)        
+                token_names.append(n)
         logger.critical(f'Missing tokens are {token_names}.')
         return False
     return True
