@@ -28,6 +28,7 @@ TELEGRAM_CHAT_ID = os.getenv('TELEGRAM_CHAT_ID')
 TELEGRAM_RETRY_TIME = 600
 
 ENDPOINT = 'https://practicum.yandex.ru/api/user_api/homework_statuses/'
+
 HEADERS = {'Authorization': f'OAuth {PRACTICUM_TOKEN}'}
 
 HOMEWORK_STATUSES = {
@@ -62,7 +63,6 @@ def get_api_answer(current_timestamp):
     """
     logger = logging.getLogger('get_api_answer')
     logger.info('get_api_answer')
-    print('GET API')
     timestamp = current_timestamp or int(time.time())
     params = {'from_date': timestamp}
     try:
@@ -89,7 +89,7 @@ def check_response(response):
     if not issubclass(type(response), dict):
         raise TypeError('Type is not a dictionary')
 
-    if response.get('homeworks') == []:
+    if not response.get('homeworks'):
         raise ValueError('No homeworks were found so far')
 
     return response.get('homeworks')[0]
@@ -103,12 +103,21 @@ def parse_status(homework):
     В случае успеха, функция возвращает подготовленную для отправки
     в Telegram строку, содержащую один из вердиктов словаря HOMEWORK_STATUSES
     """
-    if not {'homework_name',
-            'status'}.issubset(homework):
-        raise KeyError('Response yet to contain the required values')
+    if not {'homework_name', 'status'}.issubset(homework):
+        missing_keys = []
+        for k in {'homework_name', 'status'}:
+            logger.info(f'{k}')
+            if k not in homework:
+                missing_keys.append(k)
+        raise KeyError('Response is missing the following keys: '
+                       f'{missing_keys}')
 
     homework_name = homework['homework_name']
     status = homework['status']
+
+    if status not in HOMEWORK_STATUSES:
+        raise ValueError(f'Unknown status data: "{status}".')
+
     verdict = HOMEWORK_STATUSES[status]
     return (f'Изменился статус проверки работы "{homework_name}". '
             f'{verdict}')
@@ -122,44 +131,48 @@ def check_tokens():
     вернуть False, иначе — True.
     """
     logger = logging.getLogger('check_tokens')
-    try:
-        if None in {PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID}:
-            return False
-        return True
-    except NameError as name:
-        logger.critical(f'Token {name}')
+    if None in {PRACTICUM_TOKEN, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID}:
+        token_names = []
+        for n in globals():
+            if (eval(n) in (PRACTICUM_TOKEN,
+                            TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
+               and eval(n) is None and '__' not in n):
+                token_names.append(n)        
+        logger.critical(f'Missing tokens are {token_names}.')
         return False
+    return True
 
 
 def main():
     """Основная логика работы бота."""
     logger = logging.getLogger(__name__)
-    if not check_tokens():
-        raise ValueError('There is an issue with the tokens!')
-    else:
-        bot = telegram.Bot(token=TELEGRAM_TOKEN)
-        current_timestamp = int(time.time())
-        previous_error = None
-        while True:
-            try:
-                response = get_api_answer(current_timestamp)
-                logger.info('response was received')
-                message = parse_status(check_response(response))
-                logger.info('parsing was completed')
-                send_message(bot, message)
-                logger.info('message was sent to Telegram chat '
-                            f'{TELEGRAM_CHAT_ID}')
-                current_timestamp = response.get('current_date')
-                time.sleep(TELEGRAM_RETRY_TIME)
 
-            except Exception as error:
-                message = f'Сбой в работе программы: {error}'
-                if str(error) != str(previous_error):
-                    send_message(bot, message)
-                    previous_error = error
-                time.sleep(TELEGRAM_RETRY_TIME)
-            else:
-                logger.error('test')
+    if not check_tokens():
+        exit()
+
+    bot = telegram.Bot(token=TELEGRAM_TOKEN)
+    current_timestamp = int(time.time())
+    previous_error = None
+
+    while True:
+        try:
+            response = get_api_answer(current_timestamp)
+            logger.info('response was received')
+            message = parse_status(check_response(response))
+            logger.info('parsing was completed')
+            send_message(bot, message)
+            logger.info('message was sent to Telegram chat '
+                        f'{TELEGRAM_CHAT_ID}')
+            current_timestamp = response.get('current_date')
+            time.sleep(TELEGRAM_RETRY_TIME)
+
+        except Exception as error:
+            message = f'Сбой в работе программы: {error}'
+            print('ERROR: ', error.args)
+            if str(error) != str(previous_error):
+                send_message(bot, message)
+                previous_error = error
+            time.sleep(TELEGRAM_RETRY_TIME)
 
 
 if __name__ == '__main__':

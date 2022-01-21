@@ -262,7 +262,6 @@ class TestHomework:
         func_name = 'parse_status'
 
         utils.check_function(homework, func_name, 1)
-
         result = homework.parse_status(test_data)
         assert result.startswith(
             f'Изменился статус проверки работы "{random_timestamp}"'
@@ -406,12 +405,7 @@ class TestHomework:
 
         func_name = 'parse_status'
         response = homework.get_api_answer(current_timestamp)
-        print(response.get('homeworks')[0])
-        if not {'homework_name',
-            'status'}.issubset(response.get('homeworks')[0]):
-            print('done')
         homeworks = homework.check_response(response)
-        print(homeworks)
         for hw in homeworks:
             status_message = None
             try:
@@ -459,6 +453,7 @@ class TestHomework:
 
         func_name = 'parse_status'
         response = homework.get_api_answer(current_timestamp)
+        print(response)
         homeworks = homework.check_response(response)
         try:
             for hw in homeworks:
