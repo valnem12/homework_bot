@@ -106,7 +106,6 @@ def parse_status(homework):
     if not {'homework_name', 'status'}.issubset(homework):
         missing_keys = []
         for k in {'homework_name', 'status'}:
-            logger.info(f'{k}')
             if k not in homework:
                 missing_keys.append(k)
         raise KeyError('Response is missing the following keys: '
