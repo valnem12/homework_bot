@@ -167,7 +167,7 @@ def main():
 
         except Exception as error:
             message = f'Сбой в работе программы: {error}'
-            print('ERROR: ', error.args)
+            logger.exception('ERROR: ', error.args)
             if str(error) != str(previous_error):
                 send_message(bot, message)
                 previous_error = error
